@@ -2,34 +2,64 @@ import streamlit as st
 import pandas as pd
 from utils.helpers import load_prompts
 from core.data_processing import load_data
+from core.api_handler import get_openai_client # Import for key validation
 
 def render_setup_screen():
     """Render the setup screen UI elements."""
     st.header("1. Setup Configuration")
 
-    # --- Check for API Key (via Secrets) ---
-    api_key_status = "Not Set"
-    try:
-        if st.secrets.get("openai_api_key"):
-            api_key_status = "✅ Configured in Secrets"
-            st.success(api_key_status)
-        else:
-            api_key_status = "❌ Missing in Secrets"
-            st.error("OpenAI API key (`openai_api_key`) is missing in Streamlit Secrets.")
-            st.info("Please ask the app deployer to add the key via the Streamlit Cloud dashboard.")
-            st.stop() # Stop execution if key is missing
-    except Exception as e:
-        # Secrets might not exist locally, provide guidance
-        api_key_status = f"❓ Error checking Secrets ({type(e).__name__}). May work on Cloud."
-        st.warning(api_key_status)
-        st.info("Secrets are typically configured when deploying to Streamlit Community Cloud.")
-        # Allow proceeding locally for testing UI, but API calls will fail later
-        # Consider adding a local input for testing if needed:
-        # local_key = st.text_input("Enter API key for local testing (optional)", type="password")
-        # if local_key: st.session_state['local_api_key'] = local_key
+    # --- API Key Input ---
+    st.subheader("OpenAI API Key")
+    st.info("🔑 Your API key is required for this session to interact with OpenAI. It is not stored permanently.", icon="ℹ️")
+
+    api_key_verified = st.session_state.get("api_key_verified", False)
+    user_api_key = st.session_state.get("user_api_key", "")
+
+    if api_key_verified and user_api_key:
+        st.success("API Key verified for this session.")
+        # Optional: Allow user to change key
+        if st.button("Change API Key"):
+            st.session_state["api_key_verified"] = False
+            st.session_state["user_api_key"] = None
+            st.rerun()
+    else:
+        provided_key = st.text_input(
+            "Enter your OpenAI API Key:",
+            type="password",
+            key="api_key_input",
+            help="Your key is used only for this session and is not saved.",
+            value=user_api_key if not api_key_verified else "" # Show key only if verification failed
+        )
+
+        if st.button("Verify and Save Key for Session"):
+            if provided_key:
+                try:
+                    # Validate the key by trying to initialize the client
+                    client = get_openai_client(api_key=provided_key)
+                    if client:
+                        # Optional: Make a lightweight test call if desired
+                        # client.models.list() # Uncomment to perform a live test
+                        st.session_state["user_api_key"] = provided_key
+                        st.session_state["api_key_verified"] = True
+                        st.success("API Key verified and saved for this session.")
+                        st.rerun() # Rerun to update UI state
+                    else:
+                        # get_openai_client should raise error if invalid format,
+                        # but handle potential None return just in case
+                         st.error("Failed to initialize OpenAI client with the provided key.")
+                         st.session_state["user_api_key"] = None # Clear invalid key
+                         st.session_state["api_key_verified"] = False
+
+                except Exception as e:
+                    st.error(f"API Key verification failed: {e}")
+                    st.session_state["user_api_key"] = None # Clear invalid key
+                    st.session_state["api_key_verified"] = False
+            else:
+                st.warning("Please enter an API key.")
 
     # --- Prompt Configuration ---
     st.subheader("Prompt Configuration")
+    # ... (rest of the prompt config remains the same) ...
     default_prompts = load_prompts() # Load from context/ folder
     prompt_options = ["Custom Prompt"] + list(default_prompts.keys()) # Custom first
 
@@ -99,8 +129,10 @@ def render_setup_screen():
 
     st.session_state["use_default_context"] = (selected_prompt_name != "Custom Prompt")
 
+
     # --- Model Selection ---
     st.subheader("Model Selection")
+    # ... (model selection logic remains the same) ...
     model_options = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo", "Custom Model"] # Add more as needed
     # Ensure current choice is valid, default to gpt-4o if not
     current_model = st.session_state.get("model_choice", "gpt-4o")
@@ -139,6 +171,7 @@ def render_setup_screen():
 
     # --- Data Upload and Configuration ---
     st.subheader("Data Upload & Column Selection")
+    # ... (file upload logic remains largely the same) ...
     uploaded_file = st.file_uploader(
         "Upload CSV or Excel file with responses **and** manual scores (if comparing)",
         type=["csv", "xlsx", "xls"],
@@ -223,6 +256,12 @@ def render_setup_screen():
             # --- Validation and Proceed Button ---
             can_proceed = True
             error_messages = []
+
+            # --- MODIFIED Validation ---
+            if not st.session_state.get("api_key_verified", False):
+                 error_messages.append("API Key is not provided or verified for this session.")
+                 can_proceed = False
+            # --- End MODIFIED Validation ---
 
             if not chosen_model:
                  error_messages.append("Model is not selected.")

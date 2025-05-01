@@ -36,6 +36,8 @@ def init_session_state():
         st.session_state["ratings_matrix_for_viz"] = None # Data used for ICC/viz
 
         # --- Configuration State ---
+        st.session_state["user_api_key"] = None # ADDED: To store the user's key for the session
+        st.session_state["api_key_verified"] = False # ADDED: Flag to track if the session key is valid
         st.session_state["model_choice"] = "gpt-4o" # Default model
         st.session_state["custom_model"] = ""
         st.session_state["chosen_model"] = "gpt-4o"
