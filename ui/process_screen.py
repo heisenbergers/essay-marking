@@ -63,7 +63,7 @@ def render_process_screen():
     if not st.session_state.get("processing_complete", False):
         st.info(f"Ready to process **{total_rows}** responses using the configured settings.")
         st.markdown("""
-        <div class="warning-box" style="background-color: #fff3cd; border-left: 6px solid #ffc107; padding: 10px; margin-bottom: 15px;">
+        <div class="warning-box" style="background-color: yellow; border-left: 6px solid #ffc107; padding: 10px; margin-bottom: 15px; color: black;">
             <p style="margin-bottom:0;"><strong>⚠️ Note:</strong> Processing involves calls to the OpenAI API which may incur costs and take time depending on the number of responses and model used. Ensure your API key is active and has sufficient quota.</p>
         </div>
         """, unsafe_allow_html=True)
