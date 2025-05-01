@@ -7,3 +7,5 @@ matplotlib
 seaborn
 tenacity
 openpyxl # Required for reading .xlsx files
+google-generativeai # For Gemini
+anthropic # For Claude
