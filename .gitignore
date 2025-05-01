@@ -1,0 +1,13 @@
+# .gitignore
+.streamlit/secrets.toml
+venv/
+*.venv/
+env/
+__pycache__/
+*.py[cod]
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+test_data/
+context/
