@@ -35,7 +35,8 @@ def init_session_state():
         # --- Configuration State ---
         # API Keys (Store separately)
         st.session_state["openai_api_key"] = None
-        st.session_state["google_api_key"] = None
+        # Corrected key name for consistency
+        st.session_state["gemini_api_key"] = None
         st.session_state["anthropic_api_key"] = None
         # Track verification per provider
         st.session_state["api_key_verified"] = {"openai": False, "gemini": False, "claude": False}
@@ -71,8 +72,8 @@ def reset_session():
     current_session_id = st.session_state.get("session_id", str(uuid.uuid4()))
 
     # List of keys to preserve (e.g., API keys, potentially provider/model choice)
-    # For now, let's preserve API keys but reset other selections
-    keys_to_preserve = ['session_id', 'openai_api_key', 'google_api_key', 'anthropic_api_key', 'api_key_verified']
+    # Preserve API keys and verification status
+    keys_to_preserve = ['session_id', 'openai_api_key', 'gemini_api_key', 'anthropic_api_key', 'api_key_verified']
     preserved_values = {key: st.session_state.get(key) for key in keys_to_preserve}
 
     # Clear all keys

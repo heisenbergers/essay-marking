@@ -13,9 +13,12 @@ def render_sidebar():
         step_names = ["1. Setup", "2. Process", "3. Analysis"]
 
         # Determine which steps are completed/accessible
-        setup_done = st.session_state.get("setup_ Mcomplete", False) # Flag set after setup
+        # setup_done = st.session_state.get("setup_complete", False) # Removed check for this unused/unset state key
         process_done = st.session_state.get("processing_complete", False) # Existing flag
         compute_irr = st.session_state.get("compute_irr", False)
+        # Check if setup is complete enough to proceed (file uploaded and response column selected)
+        setup_complete_enough = st.session_state.get("raw_df") is not None and st.session_state.get("response_column") is not None
+
 
         st.subheader("Workflow")
         for i, (step, name) in enumerate(zip(steps, step_names)):
@@ -24,8 +27,8 @@ def render_sidebar():
             if step == "setup":
                 disabled = False
             elif step == "process":
-                 # Must have completed setup (e.g., uploaded file and selected columns)
-                 disabled = not st.session_state.get("uploaded_file") or not st.session_state.get("response_column")
+                 # Must have completed setup enough
+                 disabled = not setup_complete_enough
             elif step == "analysis":
                 # Must have completed processing and requested IRR
                 disabled = not process_done or not compute_irr

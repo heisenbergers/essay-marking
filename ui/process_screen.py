@@ -5,6 +5,8 @@ from ui.components import download_link
 import matplotlib.pyplot as plt
 import seaborn as sns
 import time # Import time
+# Corrected import path for try_convert_to_numeric
+from utils.helpers import try_convert_to_numeric
 
 def render_process_screen():
     """Render the processing screen UI elements."""
@@ -167,7 +169,7 @@ def render_process_screen():
             # Display stats based on 'gpt_score' if possible BEFORE analysis step adds numeric col
             if 'gpt_score' in processed_df.columns:
                 try:
-                    from core.data_processing import try_convert_to_numeric # Use helper directly
+                    # Use helper directly (import path corrected above)
                     temp_numeric_scores = try_convert_to_numeric(processed_df['gpt_score'], "LLM Score (Preview)")
                     numeric_scores = temp_numeric_scores.dropna()
 

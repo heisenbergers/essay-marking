@@ -3,6 +3,7 @@ import pandas as pd
 from utils.helpers import load_prompts
 from core.data_processing import load_data
 from core.api_handler import get_llm_client # Import factory
+import time # Added missing import for time.sleep
 
 # --- Define Available Models ---
 AVAILABLE_MODELS = {
