@@ -3,6 +3,7 @@ import os
 import json
 import re
 import pandas as pd
+import numpy as np # <-- Added import
 
 @st.cache_data # Cache the loaded prompts
 def load_prompts(folder="context"):
@@ -126,18 +127,19 @@ def parse_llm_response(response_text: str, expected_format: str = "json_score_re
     # Ensure score and reason are strings
     return str(score).strip(), str(reason).strip()
 
-# --- Kept Helper Functions ---
-def clean_scores(scores):
+
+def clean_scores(scores: pd.Series) -> list:
     """Clean and standardize score values before numeric conversion."""
     cleaned = []
+    # Using .astype(str) and then iterating might be slightly cleaner
+    # but iterating directly handles mixed types initially.
     for s in scores:
         if isinstance(s, (int, float)):
             cleaned.append(s) # Already numeric
         elif isinstance(s, str):
             # Remove common text like "score:", whitespace, trailing periods
             s_cleaned = re.sub(r'(?i)score:?\s*', '', s).strip().rstrip('.').strip()
-            # Handle potential ranges (e.g., "7-8") - take the first number or average?
-            # For now, let's try taking the first valid number found
+            # Handle potential ranges (e.g., "7-8") - take the first number
             match = re.search(r'^\s*(-?\d+(?:\.\d+)?).*', s_cleaned) # Extract number even if text follows
             if match:
                  cleaned.append(match.group(1))
@@ -147,35 +149,73 @@ def clean_scores(scores):
             cleaned.append(str(s) if s is not None else "") # Convert other types to string
     return cleaned
 
-def try_convert_to_numeric(series, column_name="Scores"):
-    """Try to convert a series to numeric, providing detailed warnings."""
+def try_convert_to_numeric(series: pd.Series, column_name: str = "Scores") -> pd.Series:
+    """
+    Try to convert a Pandas Series to numeric, providing detailed warnings for failures.
+
+    Args:
+        series (pd.Series): The series to convert.
+        column_name (str): The name of the column for display in warnings.
+
+    Returns:
+        pd.Series: The converted series with non-numeric values as NaN.
+    """
+    if not isinstance(series, pd.Series):
+        st.error(f"Input error for '{column_name}': try_convert_to_numeric expects a Pandas Series.")
+        return pd.Series([np.nan] * len(series)) # Return NaNs of appropriate length
+
     # First, clean the potential score values
-    cleaned_series = clean_scores(series)
-    original_series = series # Keep original for comparison
+    cleaned_list = clean_scores(series) # Returns a list
 
-    # Attempt conversion
-    converted = pd.to_numeric(cleaned_series, errors='coerce')
+    # Attempt conversion using the list
+    numeric_result = pd.to_numeric(cleaned_list, errors='coerce') # Can return Series or ndarray
 
-    # Identify and report errors
-    nan_indices = converted.isna()
-    # original_non_numeric = original_series[nan_indices]
-    # cleaned_non_numeric = pd.Series(cleaned_series)[nan_indices]
+    # --- Ensure 'converted' is a Pandas Series ---
+    if isinstance(numeric_result, np.ndarray):
+        # Convert ndarray back to a Series, preserving the original index and name
+        converted = pd.Series(numeric_result, index=series.index, name=series.name)
+    elif isinstance(numeric_result, pd.Series):
+        # If it's already a Series, ensure index and name match original
+        converted = numeric_result
+        converted.index = series.index
+        converted.name = series.name
+    else:
+        # Handle unexpected types, perhaps coerce to Series with NaNs
+        st.warning(f"Unexpected type returned by pd.to_numeric for '{column_name}': {type(numeric_result)}. Attempting conversion.")
+        try:
+            converted = pd.Series(numeric_result, index=series.index, name=series.name)
+        except Exception: # Broad exception if Series creation fails
+             converted = pd.Series([np.nan] * len(series), index=series.index, name=series.name)
+
+    # --- Identify and report errors using the guaranteed Series 'converted' ---
+    nan_mask = converted.isna()
+    original_failed = series[nan_mask]
 
     non_numeric_examples = []
-    for i, (orig, clean, conv) in enumerate(zip(original_series, cleaned_series, converted)):
-        # Check if original was not empty string or just whitespace before considering it a conversion failure
-        orig_is_empty_str = isinstance(orig, str) and not orig.strip()
-        if pd.isna(conv) and not orig_is_empty_str and orig is not None :
-             orig_display = str(orig)[:100] + ('...' if len(str(orig))>100 else '') # Truncate long originals
-             clean_display = str(clean)[:100] + ('...' if len(str(clean))>100 else '')
-             non_numeric_examples.append(f"Row {series.index[i]+1}: Original='{orig_display}', Cleaned='{clean_display}' -> Failed")
+    # Iterate through only the values that failed conversion
+    for idx, orig_val in original_failed.items():
+        # Check if original value was actually non-empty before flagging
+        orig_is_empty_str = isinstance(orig_val, str) and not orig_val.strip()
+        if not orig_is_empty_str and orig_val is not None:
+            # Find the corresponding 'cleaned' value
+            try:
+                loc = series.index.get_loc(idx) # Get integer position from original index
+                clean_val = cleaned_list[loc] if loc < len(cleaned_list) else "[Cleaned value lookup error]"
+            except Exception:
+                clean_val = "[Cleaned value lookup error]"
+
+            orig_display = str(orig_val)[:100] + ('...' if len(str(orig_val)) > 100 else '')
+            clean_display = str(clean_val)[:100] + ('...' if len(str(clean_val)) > 100 else '')
+            non_numeric_examples.append(f"Row index '{idx}': Original='{orig_display}', Cleaned='{clean_display}' -> Failed")
 
     if non_numeric_examples:
         st.warning(f"Could not convert {len(non_numeric_examples)} non-empty values in column '{column_name}' to numeric.")
-        with st.expander(f"Show unconverted values for '{column_name}'"):
-            st.write(non_numeric_examples[:20]) # Show first 20 examples
-            if len(non_numeric_examples) > 20:
-                 st.caption("... and more.")
+        # Limit the number of examples shown in the expander
+        examples_to_show = non_numeric_examples[:30]
+        with st.expander(f"Show unconverted values for '{column_name}' (Max 30 shown)"):
+            st.code('\n'.join(examples_to_show), language=None) # Use st.code for better formatting
+            if len(non_numeric_examples) > 30:
+                 st.caption(f"... and {len(non_numeric_examples) - 30} more.")
         st.info("Non-numeric scores will be excluded from calculations like ICC.")
 
-    return converted
+    return converted # Returns pd.Series

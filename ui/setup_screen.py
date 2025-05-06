@@ -6,11 +6,20 @@ from core.api_handler import get_llm_client # Import factory
 import time # Added missing import for time.sleep
 
 # --- Define Available Models ---
+# Added openrouter and common model examples
 AVAILABLE_MODELS = {
-    "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
-    "gemini": ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest", "gemini-1.0-pro"],
+    "openai": ["gpt-4o", "gpt-4o-mini", "o1"],
+    "gemini": ["gemini-2.0-flash","gemini-2.5-pro-preview-03-25"],
     "claude": ["claude-3-opus-20240229", "claude-3-sonnet-20240229", "claude-3-haiku-20240307"],
-    # Add other providers and their models here
+    "openrouter": [
+        "openrouter/auto", # Special routing model
+        "openai/gpt-4o",
+        "openai/gpt-4o-mini",
+        "anthropic/claude-3.5-sonnet",
+        "google/gemini-pro-1.5",
+        "mistralai/mistral-large",
+        # Add other popular OpenRouter models as needed
+        ]
 }
 
 def render_setup_screen():
@@ -41,17 +50,19 @@ def render_setup_screen():
     # --- API Key Input (Conditional based on provider) ---
     st.subheader(f"{selected_provider.capitalize()} API Key")
 
-    provider_key_name = f"{selected_provider}_api_key" # e.g., openai_api_key
+    provider_key_name = f"{selected_provider}_api_key" # e.g., openai_api_key, openrouter_api_key
     is_verified = st.session_state.get("api_key_verified", {}).get(selected_provider, False)
     current_key = st.session_state.get(provider_key_name, "")
 
     api_key_col1, api_key_col2 = st.columns([3, 1])
 
     with api_key_col1:
+        # Added OpenRouter key label
         key_label_map = {
             "openai": "OpenAI API Key",
             "gemini": "Google AI Studio API Key",
-            "claude": "Anthropic API Key"
+            "claude": "Anthropic API Key",
+            "openrouter": "OpenRouter API Key (sk-or-...)"
         }
         key_label = key_label_map.get(selected_provider, f"{selected_provider.capitalize()} API Key")
 
@@ -104,12 +115,14 @@ def render_setup_screen():
     model_options = provider_models + ["Custom Model"]
 
     # Get current choice, default to first in list if invalid for current provider
-    current_model_choice = st.session_state.get("model_choice", model_options[0])
+    current_model_choice = st.session_state.get("model_choice", model_options[0] if model_options else "")
     if current_model_choice not in model_options:
-        current_model_choice = model_options[0]
+         # Handle case where the stored choice isn't valid for the new provider
+         current_model_choice = model_options[0] if model_options and len(model_options) > 0 else ""
+
 
     try:
-        model_index = model_options.index(current_model_choice)
+        model_index = model_options.index(current_model_choice) if current_model_choice else 0
     except ValueError:
         model_index = 0 # Default to first option if current choice is somehow invalid
 
@@ -118,7 +131,7 @@ def render_setup_screen():
         model_options,
         index=model_index,
         key="model_select",
-        help=f"Select the {selected_provider} model to use for scoring."
+        help=f"Select the {selected_provider} model to use for scoring. Models are often prefixed (e.g., 'openai/gpt-4o')."
     )
     # Update state only if selection changes
     if model_choice_selected != st.session_state.get("model_choice"):
@@ -128,7 +141,7 @@ def render_setup_screen():
     chosen_model_final = ""
     if st.session_state.model_choice == "Custom Model":
         custom_model = st.text_input(
-            "Enter Custom Model Name/ID:",
+            "Enter Custom Model Name/ID (e.g., 'openai/gpt-4o', 'anthropic/claude-3-haiku'):",
             value=st.session_state.get("custom_model", ""),
             key="custom_model_input",
             help="Enter a valid model identifier for the selected provider."
