@@ -1,3 +1,5 @@
+# response-coding/ui/process_screen.py
+
 import streamlit as st
 import pandas as pd
 from core.data_processing import process_dataframe # Refactored version
@@ -10,7 +12,8 @@ from utils.helpers import try_convert_to_numeric # Uses updated version
 
 # --- Constants ---
 # Max workers for parallel processing - adjust based on typical API limits / machine resources
-DEFAULT_MAX_WORKERS = 10
+# MODIFICATION: Changed default max workers from 10 to 1
+DEFAULT_MAX_WORKERS = 1
 # Stop processing if more than this % of rows encounter errors
 DEFAULT_ERROR_THRESHOLD_PERCENT = 25
 
@@ -98,7 +101,8 @@ def render_process_screen():
                      subset_size = 0
 
         with col_opt2:
-             max_workers = st.number_input("Max Parallel Workers", min_value=1, max_value=50, value=DEFAULT_MAX_WORKERS, step=1, key="max_workers_input", help="Number of API calls to make concurrently. Adjust based on API rate limits.")
+             # The default value here uses the modified constant
+             max_workers = st.number_input("Max Parallel Workers", min_value=1, max_value=50, value=DEFAULT_MAX_WORKERS, step=1, key="max_workers_input", help="Number of API calls to make concurrently. Default is 1. Adjust based on API rate limits.")
              error_threshold_percent = st.number_input("Stop if Error % Exceeds", min_value=-1, max_value=100, value=DEFAULT_ERROR_THRESHOLD_PERCENT, step=5, key="error_threshold_input", help="Stop processing if the percentage of rows with errors exceeds this value. Set to -1 to never stop automatically.")
 
         df_to_process = raw_df.head(subset_size) if process_subset else raw_df
@@ -161,6 +165,8 @@ def render_process_screen():
         else:
             st.warning("No rows selected or available for processing.")
 
+    # --- Display Results ---
+    # ...(rest of the function remains the same)...
     # --- Display Results ---
     if processing_complete:
         # Use processed_df directly from state now

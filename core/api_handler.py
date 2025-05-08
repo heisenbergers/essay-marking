@@ -71,7 +71,7 @@ class OpenAIClient(LLMClient):
     @openai_retry(
         wait=openai_wait(min=1, max=30), # Shorter max wait for retries
         stop=openai_stop(3), # Fewer attempts for OpenAI
-        retry=openai_retry_if(lambda e: isinstance(e, openai_retryable_errors)) # Check instance
+        retry=openai_retry_if(openai_retryable_errors) # Corrected: Pass tuple directly
     )
     def generate(self, prompt: str, context: str, model_name: str, **kwargs) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
@@ -202,7 +202,7 @@ class ClaudeClient(LLMClient):
     @anthropic_retry(
         wait=anthropic_wait(min=1, max=30),
         stop=anthropic_stop(3), # Fewer attempts for Anthropic
-        retry=openai_retry_if(lambda e: isinstance(e, anthropic_retryable_errors)) # Check instance
+        retry=anthropic_retry_if(anthropic_retryable_errors) # Corrected: Pass tuple directly
     )
     def generate(self, prompt: str, context: str, model_name: str, **kwargs) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
@@ -281,7 +281,7 @@ class OpenRouterClient(LLMClient):
     @openai_retry( # Use openai retry settings, adjust if needed for OpenRouter specifics
         wait=openai_wait(min=1, max=30),
         stop=openai_stop(3), # Fewer attempts generally good practice
-        retry=openai_retry_if(lambda e: isinstance(e, openrouter_retryable_errors)) # Check instance
+        retry=openai_retry_if(openrouter_retryable_errors) # Corrected: Pass tuple directly
     )
     def generate(self, prompt: str, context: str, model_name: str, **kwargs) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
