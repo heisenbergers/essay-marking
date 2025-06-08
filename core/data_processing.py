@@ -4,7 +4,7 @@ import time
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Tuple, Dict, Any, List
+from typing import Tuple, Dict, Any, List, Optional # Added Optional
 import logging # Optional: for better logging
 
 # --- Tenacity for Retries ---
@@ -111,53 +111,61 @@ def _process_single_row(
     row_data: pd.Series,
     response_column: str,
     context: str,
+    provider: str, # Added provider to check for deepseek
     model: str,
     expected_format: str,
     llm_client: LLMClient # Pass the initialized client
-) -> Tuple[Any, str, str, str]:
+) -> Tuple[Any, str, str, str, Optional[str]]: # Added chain_of_thought string
     """Processes a single row, making the API call (with retries on parsing failure) and parsing."""
     prompt_text = row_data.get(response_column, "")
+
     # Ensure prompt_text is a string before proceeding
     if pd.isna(prompt_text) or not isinstance(prompt_text, str):
         prompt_text = ""
 
     # Handle empty prompt text directly - no API call or retry needed
     if not prompt_text.strip():
-        return index, "Skipped: Empty prompt", "", "" # score and reason are empty
+        return index, "Skipped: Empty prompt", "", "", None # score, reason, and chain_of_thought are empty/None
 
     final_raw_response = "Not Processed" # Default value if processing fails catastrophically
     final_score = "ERROR"
     final_reason = "Processing did not complete due to an unexpected issue."
+    final_chain_of_thought: Optional[str] = None
+
 
     try:
         # _attempt_api_call_and_parse is now decorated with tenacity's @retry
-        # It will handle retries for ParsingRetryableError internally.
+        # It will handle retries for ParsingRetryableError internally
         final_raw_response, final_score, final_reason = _attempt_api_call_and_parse(
-            llm_client, prompt_text, context, model, expected_format, index_for_log=str(index)
+            llm_client, prompt_text, context, model, expected_format, str(index)
         )
-    except ParsingRetryableError as e:
-        # This block is reached if all tenacity retries for parsing failure are exhausted.
-        # The error 'e' will be the last ParsingRetryableError raised.
-        # logger.error(f"Index {index}: All API call/parse retries failed for format '{expected_format}'. Last error: {str(e)}. Last raw response snippet: '{e.raw_response_snippet}'")
-        final_raw_response = f"ERROR: All retries failed for parsing. Last raw response snippet: '{e.raw_response_snippet}'. Original error: {str(e)}"
+        # If DeepSeek Reasoner, try to get reasoning content
+        if provider == "deepseek" and model == "deepseek-reasoner":
+            final_chain_of_thought = llm_client.get_last_reasoning_content()
+
+
+    except RetryError as e: # This catches ParsingRetryableError after all retries are exhausted
+        # logger.error(f"Index {index}: All retries failed for parsing. Last raw response snippet: '{e.last_attempt.exception().raw_response_snippet}'. Original error: {str(e.last_attempt.exception())}")
+        final_raw_response = f"ERROR (Parsing - All Retries Failed): {e.last_attempt.exception().raw_response_snippet if hasattr(e.last_attempt.exception(), 'raw_response_snippet') else str(e.last_attempt.exception())}"
         final_score = "ERROR"
         final_reason = final_raw_response # Use the detailed error as the reason
-    except ValueError as ve:
-        # Catches non-retryable errors from llm_client.generate (e.g., auth, model not found)
-        # or errors from _attempt_api_call_and_parse if they are not ParsingRetryableError.
+        final_chain_of_thought = None
+    except ValueError as ve: # Catches non-retryable errors from llm_client.generate (e.g., auth, model not found)
+                            # or errors from _attempt_api_call_and_parse if they are not ParsingRetryableError.
         # logger.warning(f"Index {index}: ValueError during processing: {ve}")
         final_raw_response = f"ERROR ({llm_client.__class__.__name__} or API Call): {ve}"
         final_score = "ERROR"
         final_reason = final_raw_response
-    except Exception as e:
-        # Catches any other unexpected errors during the process.
+        final_chain_of_thought = None
+    except Exception as e: # Catches any other unexpected errors during the process.
         # logger.error(f"Index {index}: Unexpected error during processing: {e}", exc_info=True)
         error_type = type(e).__name__
         final_raw_response = f"ERROR (Unexpected - {error_type}): {e}"
         final_score = "ERROR"
         final_reason = final_raw_response
+        final_chain_of_thought = None
 
-    return index, final_raw_response, final_score, final_reason
+    return index, final_raw_response, final_score, final_reason, final_chain_of_thought
 
 
 def process_dataframe(
@@ -172,48 +180,52 @@ def process_dataframe(
     stop_on_error_threshold: int = -1 # Stop if this many errors occur (-1 for never)
 ) -> pd.DataFrame:
     """
-    Process the dataframe by sending responses to the LLM API in parallel
-    and parsing based on the expected_format.
+    Process the dataframe by sending responses to the LLM API in parallel and parsing based on the expected_format.
     Includes retry logic for parsing failures of API responses.
     """
     if response_column not in df.columns:
         st.error(f"The uploaded file must contain the selected response column: '{response_column}'")
         return df
-
     if not api_key:
-         st.error(f"API Key for {provider} is missing. Cannot process. Please configure in Step 1.")
-         # Add error columns immediately
-         df["gpt_score_raw"] = f"ERROR: Missing {provider} API Key"
-         df["gpt_score"] = "ERROR"
-         df["gpt_reason"] = f"ERROR: Missing {provider} API Key"
-         return df
+        st.error(f"API Key for {provider} is missing. Cannot process. Please configure in Step 1.")
+        # Add error columns immediately
+        df["gpt_score_raw"] = f"ERROR: Missing {provider} API Key"
+        df["gpt_score"] = "ERROR"
+        df["gpt_reason"] = f"ERROR: Missing {provider} API Key"
+        df["chain_of_thought"] = f"ERROR: Missing {provider} API Key"
+        return df
 
     # --- Get LLM Client using Factory ---
     try:
         # Use _key argument for cache_resource based on provider and key
         llm_client = get_llm_client(provider=provider, api_key=api_key)
-    except Exception as e:
-        # Error already shown by get_llm_client, just add columns and return
+    except Exception as e: # Error already shown by get_llm_client, just add columns and return
         st.info("Processing cannot proceed due to client initialization failure.")
-        df["gpt_score_raw"] = f"ERROR: Client Init Failed ({provider}) - {e}"
+        df["gpt_score_raw"] = f"ERROR: Client init failed for {provider}"
         df["gpt_score"] = "ERROR"
-        df["gpt_reason"] = f"Client Init Failed: {e}"
+        df["gpt_reason"] = f"ERROR: Client init failed for {provider}"
+        df["chain_of_thought"] = f"ERROR: Client init failed for {provider}"
         return df
 
-    progress_bar = st.progress(0.0)
-    status_text = st.empty()
+
+    result_df = df.copy()
+    # Initialize new columns with pd.NA for proper dtype handling later
+    result_df["gpt_score_raw"] = pd.NA
+    result_df["gpt_score"] = pd.NA
+    result_df["gpt_reason"] = pd.NA
+    result_df["chain_of_thought"] = pd.NA # New column
+
     total = len(df)
-    result_df = df.copy() # Start with a copy
+    if total == 0:
+        st.warning("Input DataFrame is empty. Nothing to process.")
+        return result_df
 
-    # Initialize result columns if they don't exist, ensuring object dtype
-    for col in ["gpt_score_raw", "gpt_score", "gpt_reason"]:
-        if col not in result_df.columns:
-            result_df[col] = pd.NA
-        result_df[col] = result_df[col].astype(object)
-
-    processed_count = 0
+    progress_bar = st.progress(0.0)
+    status_text = st.empty() # Placeholder for dynamic text updates
     error_count = 0
-    results: Dict[Any, Dict[str, str]] = {} # Store results keyed by original index
+    processed_count = 0
+
+    results: Dict[Any, Dict[str, Optional[str]]] = {} # Store results keyed by original index, allow None for CoT
 
     start_time = time.time()
     status_text.text(f"Starting processing for {total} items using {provider}/{model}...")
@@ -221,7 +233,7 @@ def process_dataframe(
     # Use ThreadPoolExecutor for parallel API calls
     actual_max_workers = min(max_workers, total) if total > 0 else 1
     if actual_max_workers != max_workers:
-         st.info(f"Using {actual_max_workers} parallel workers (adjusted from {max_workers}).")
+        st.info(f"Using {actual_max_workers} parallel workers (adjusted from {max_workers}).")
 
     futures = []
     try:
@@ -234,6 +246,7 @@ def process_dataframe(
                     row_data=row,
                     response_column=response_column,
                     context=context,
+                    provider=provider, # Pass provider
                     model=model,
                     expected_format=expected_format,
                     llm_client=llm_client
@@ -242,30 +255,30 @@ def process_dataframe(
             # Process completed futures as they finish
             for future in as_completed(futures):
                 try:
-                    idx, raw, score, reason = future.result()
-                    results[idx] = {"gpt_score_raw": raw, "gpt_score": score, "gpt_reason": reason}
+                    idx, raw, score, reason, cot = future.result()
+                    results[idx] = {"gpt_score_raw": raw, "gpt_score": score, "gpt_reason": reason, "chain_of_thought": cot}
 
                     # Increment error count if result indicates an error
                     if score == "ERROR" or (isinstance(raw, str) and raw.startswith("ERROR:")):
-                         error_count += 1
-                         # Check if error threshold is reached
-                         if stop_on_error_threshold >= 0 and error_count >= stop_on_error_threshold: # Corrected condition
-                              st.warning(f"Stopping processing: Error threshold ({stop_on_error_threshold}) reached with {error_count} errors.")
-                              # Cancel remaining futures if possible (Python 3.9+)
-                              # for f in futures:
-                              #     if not f.done():
-                              #         f.cancel()
-                              # executor.shutdown(wait=False, cancel_futures=True) # Preferred for 3.9+
-                              break # Exit the loop processing completed futures
+                        error_count += 1
 
-                except Exception as exc:
-                     # This might catch errors from future.result() if a future was cancelled
-                     # or if an exception propagated from _process_single_row that wasn't handled there
-                     st.error(f"Error retrieving result from a processing task: {exc}")
-                     # logger.error(f"Error retrieving result from future: {exc}", exc_info=True)
-                     error_count += 1
-                     # Since we don't have 'idx' here, we can't easily mark a specific row.
-                     # This indicates a more systemic issue with the future handling itself.
+                    # Check if error threshold is reached
+                    if stop_on_error_threshold >= 0 and error_count >= stop_on_error_threshold: # Corrected condition
+                        st.warning(f"Stopping processing: Error threshold ({stop_on_error_threshold}) reached with {error_count} errors.")
+                        # Cancel remaining futures if possible (Python 3.9+)
+                        # for f in futures:
+                        # if not f.done():
+                        # f.cancel()
+                        # executor.shutdown(wait=False, cancel_futures=True) # Preferred for 3.9+
+                        break # Exit the loop processing completed futures
+
+                except Exception as exc: # This might catch errors from future.result() if a future was cancelled
+                                         # or if an exception propagated from _process_single_row that wasn't handled there
+                    st.error(f"Error retrieving result from a processing task: {exc}")
+                    # logger.error(f"Error retrieving result from future: {exc}", exc_info=True)
+                    error_count += 1
+                    # Since we don't have 'idx' here, we can't easily mark a specific row.
+                    # This indicates a more systemic issue with the future handling itself.
 
                 processed_count += 1
                 progress = processed_count / total if total > 0 else 1.0
@@ -273,20 +286,20 @@ def process_dataframe(
                 elapsed_time = time.time() - start_time
                 est_total_time = (elapsed_time / processed_count * total) if processed_count > 0 else 0
                 remaining_time = est_total_time - elapsed_time if est_total_time > elapsed_time else 0.0
+
                 status_text.text(
                     f"Processed: {processed_count}/{total} ({progress:.1%}) | "
                     f"Errors: {error_count} | "
                     f"Elapsed: {elapsed_time:.1f}s | "
                     f"Est. Remain: {remaining_time:.1f}s"
                 )
-
                 if processed_count % 20 == 0 or processed_count == total: # Update less frequently
-                     temp_df_for_state = result_df.copy()
-                     for r_idx, res_data in results.items():
-                         if r_idx in temp_df_for_state.index:
-                            temp_df_for_state.loc[r_idx, ["gpt_score_raw", "gpt_score", "gpt_reason"]] = res_data.values()
-                     st.session_state["processed_df"] = temp_df_for_state
-                     # logger.info(f"Interim update to session_state['processed_df'] at {processed_count} items.")
+                    temp_df_for_state = result_df.copy()
+                    for r_idx, res_data in results.items():
+                        if r_idx in temp_df_for_state.index:
+                            temp_df_for_state.loc[r_idx, ["gpt_score_raw", "gpt_score", "gpt_reason", "chain_of_thought"]] = res_data.values()
+                    st.session_state["processed_df"] = temp_df_for_state
+                    # logger.info(f"Interim update to session_state['processed_df'] at {processed_count} items.")
 
 
     except Exception as e: # Error with ThreadPoolExecutor itself or managing futures
@@ -299,7 +312,7 @@ def process_dataframe(
             final_message_parts.append(f"Encountered {error_count} errors during processing.")
         if stop_on_error_threshold >= 0 and error_count >= stop_on_error_threshold:
             final_message_parts.append("Processing was stopped early due to exceeding the error threshold.")
-        
+
         status_text.info(" ".join(final_message_parts)) # Use info or success based on outcome
         # logger.info(" ".join(final_message_parts))
 
@@ -309,29 +322,33 @@ def process_dataframe(
     raw_scores_series = pd.Series({idx: data["gpt_score_raw"] for idx, data in results.items()}, name="gpt_score_raw")
     scores_series = pd.Series({idx: data["gpt_score"] for idx, data in results.items()}, name="gpt_score")
     reasons_series = pd.Series({idx: data["gpt_reason"] for idx, data in results.items()}, name="gpt_reason")
+    chain_of_thoughts_series = pd.Series({idx: data.get("chain_of_thought") for idx, data in results.items()}, name="chain_of_thought")
+
 
     # Update the result_df. Ensure index alignment.
     result_df["gpt_score_raw"] = result_df["gpt_score_raw"].astype(object)
     result_df["gpt_score"] = result_df["gpt_score"].astype(object)
     result_df["gpt_reason"] = result_df["gpt_reason"].astype(object)
-    
+    result_df["chain_of_thought"] = result_df["chain_of_thought"].astype(object) # Ensure object type for CoT
+
     result_df.update(raw_scores_series)
     result_df.update(scores_series)
     result_df.update(reasons_series)
+    result_df.update(chain_of_thoughts_series)
+
 
     # Fill any rows that might not have been processed if loop was exited early
     # These would retain their initial pd.NA or overwritten if processing started for them but failed to complete
     # Marking explicitly if not in 'results' dict
-    for col_name in ["gpt_score_raw", "gpt_score", "gpt_reason"]:
+    for col_name in ["gpt_score_raw", "gpt_score", "gpt_reason", "chain_of_thought"]:
         mask_not_processed = ~result_df.index.isin(results.keys())
-        if col_name == "gpt_score_raw":
-            result_df.loc[mask_not_processed, col_name] = result_df.loc[mask_not_processed, col_name].fillna("Not Processed (or error before storage)")
-        elif col_name == "gpt_score":
-            result_df.loc[mask_not_processed, col_name] = result_df.loc[mask_not_processed, col_name].fillna("ERROR")
-        elif col_name == "gpt_reason":
-            result_df.loc[mask_not_processed, col_name] = result_df.loc[mask_not_processed, col_name].fillna("Not Processed (or error before storage)")
+        if col_name in result_df.columns:
+             result_df.loc[mask_not_processed, col_name] = result_df.loc[mask_not_processed, col_name].fillna("Skipped/Not Processed")
+        else: # Should not happen if columns initialized correctly
+             result_df[col_name] = pd.NA
+             result_df.loc[mask_not_processed, col_name] = "Skipped/Not Processed"
 
 
-    # Final save to session state
-    st.session_state["processed_df"] = result_df.copy()
+    st.session_state["processed_df"] = result_df
+    st.session_state["processing_complete"] = True
     return result_df

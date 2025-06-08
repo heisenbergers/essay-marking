@@ -6,7 +6,6 @@ from core.api_handler import get_llm_client # Import factory
 import time # Added missing import for time.sleep
 
 # --- Define Available Models ---
-# Added openrouter and common model examples
 AVAILABLE_MODELS = {
     "openai": ["gpt-4o", "gpt-4o-mini", "o1"],
     "gemini": ["gemini-2.0-flash","gemini-2.5-pro-preview-03-25"],
@@ -19,7 +18,8 @@ AVAILABLE_MODELS = {
         "google/gemini-pro-1.5",
         "mistralai/mistral-large",
         # Add other popular OpenRouter models as needed
-        ]
+        ],
+    "deepseek": ["deepseek-chat", "deepseek-reasoner"] # Added DeepSeek models
 }
 
 def render_setup_screen():
@@ -57,12 +57,12 @@ def render_setup_screen():
     api_key_col1, api_key_col2 = st.columns([3, 1])
 
     with api_key_col1:
-        # Added OpenRouter key label
         key_label_map = {
             "openai": "OpenAI API Key",
             "gemini": "Google AI Studio API Key",
             "claude": "Anthropic API Key",
-            "openrouter": "OpenRouter API Key (sk-or-...)"
+            "openrouter": "OpenRouter API Key (sk-or-...)",
+            "deepseek": "DeepSeek API Key" # Added DeepSeek key label
         }
         key_label = key_label_map.get(selected_provider, f"{selected_provider.capitalize()} API Key")
 
@@ -92,7 +92,7 @@ def render_setup_screen():
                             # Validate key using the factory and the specific provider's test
                             client = get_llm_client(provider=selected_provider, api_key=actual_key_to_verify)
                             # test_connection is called during init or explicitly if needed
-                            # client.test_connection()
+                            # client.test_connection() # Already called in get_llm_client or constructor
                             st.session_state[provider_key_name] = actual_key_to_verify
                             st.session_state.api_key_verified[selected_provider] = True
                             st.success(f"{selected_provider.capitalize()} API Key verified.")
@@ -117,9 +117,8 @@ def render_setup_screen():
     # Get current choice, default to first in list if invalid for current provider
     current_model_choice = st.session_state.get("model_choice", model_options[0] if model_options else "")
     if current_model_choice not in model_options:
-         # Handle case where the stored choice isn't valid for the new provider
-         current_model_choice = model_options[0] if model_options and len(model_options) > 0 else ""
-
+        # Handle case where the stored choice isn't valid for the new provider
+        current_model_choice = model_options[0] if model_options and len(model_options) > 0 else ""
 
     try:
         model_index = model_options.index(current_model_choice) if current_model_choice else 0
@@ -133,6 +132,7 @@ def render_setup_screen():
         key="model_select",
         help=f"Select the {selected_provider} model to use for scoring. Models are often prefixed (e.g., 'openai/gpt-4o')."
     )
+
     # Update state only if selection changes
     if model_choice_selected != st.session_state.get("model_choice"):
         st.session_state["model_choice"] = model_choice_selected
@@ -141,7 +141,7 @@ def render_setup_screen():
     chosen_model_final = ""
     if st.session_state.model_choice == "Custom Model":
         custom_model = st.text_input(
-            "Enter Custom Model Name/ID (e.g., 'openai/gpt-4o', 'anthropic/claude-3-haiku'):",
+            "Enter Custom Model Name/ID (e.g., 'openai/gpt-4o', 'deepseek/deepseek-chat'):", # Updated example
             value=st.session_state.get("custom_model", ""),
             key="custom_model_input",
             help="Enter a valid model identifier for the selected provider."
@@ -169,45 +169,47 @@ def render_setup_screen():
     # --- Prompt Configuration ---
     st.subheader("Prompt Configuration")
     default_prompts = load_prompts()
-    prompt_options = ["Custom Prompt"] + list(default_prompts.keys())
-    # Default to first available template if current selection invalid
-    current_prompt_name = st.session_state.get("selected_prompt_name", prompt_options[1] if len(prompt_options) > 1 else prompt_options[0])
-    if current_prompt_name not in prompt_options:
-        current_prompt_name = prompt_options[1] if len(prompt_options) > 1 else prompt_options[0]
+    prompt_options = list(default_prompts.keys()) + ["Custom Prompt"]
+
+    # Get current selection, default safely
+    current_prompt_name = st.session_state.get("selected_prompt_name", prompt_options[0] if prompt_options else "")
+    if current_prompt_name not in prompt_options: # If stored name is no longer valid
+        current_prompt_name = prompt_options[0] if prompt_options else ""
+
+    try:
+        prompt_index = prompt_options.index(current_prompt_name) if current_prompt_name else 0
+    except ValueError:
+        prompt_index = 0
 
     selected_prompt_name = st.selectbox(
-        "Select Prompt Template:",
+        "Choose a prompt template or select 'Custom Prompt':",
         options=prompt_options,
-        index=prompt_options.index(current_prompt_name),
-        key="prompt_select"
+        index=prompt_index,
+        key="prompt_name_select"
     )
 
-    # Update selected prompt name state
+    # Update prompt name state if selected_prompt_name != st.session_state.get("selected_prompt_name"):
     if selected_prompt_name != st.session_state.get("selected_prompt_name"):
         st.session_state["selected_prompt_name"] = selected_prompt_name
         # If selection changes, reset context to the new default (unless it was custom)
         if selected_prompt_name != "Custom Prompt":
-             st.session_state["context"] = default_prompts.get(selected_prompt_name, "")
-             # Reset custom context when a template is chosen
-             st.session_state["custom_context"] = ""
+            st.session_state["context"] = default_prompts.get(selected_prompt_name, "")
+            # Reset custom context when a template is chosen
+            st.session_state["custom_context"] = ""
         st.rerun()
-
 
     # Display text area for the prompt
     prompt_changed = False
     if st.session_state.selected_prompt_name == "Custom Prompt":
-        # st.session_state["prompt_choice"] = "Use custom prompt" # Less needed now
         prompt_label = "Enter Custom Prompt:"
         # Use existing custom context if available, otherwise empty
         default_value = st.session_state.get("custom_context", "")
         current_context_input = st.text_area(prompt_label, value=default_value, height=250, key="custom_prompt_area")
         if current_context_input != default_value:
-             st.session_state["custom_context"] = current_context_input # Save custom prompt separately
-             st.session_state["context"] = current_context_input # Main context used by app
-             prompt_changed = True # Flag that context was updated
-
-    else: # A default prompt is selected
-        # st.session_state["prompt_choice"] = "Use default prompt" # Less needed now
+            st.session_state["custom_context"] = current_context_input # Save custom prompt separately
+            st.session_state["context"] = current_context_input # Main context used by app
+            prompt_changed = True # Flag that context was updated
+    else:
         prompt_label = f"Selected Prompt: {st.session_state.selected_prompt_name} (Editable for this session)"
         # Use current session context if it's different from the stored default (means it was edited)
         default_text = default_prompts.get(st.session_state.selected_prompt_name, "")
@@ -220,21 +222,18 @@ def render_setup_screen():
             height=250,
             key="default_prompt_area"
         )
-
         # Update context if text area changes
         if current_context_input != current_session_context:
             st.session_state["context"] = current_context_input
             prompt_changed = True
 
-        # Reset button for templates
-        if st.button("Reset to Default Template"):
-            st.session_state["context"] = default_prompts.get(st.session_state.selected_prompt_name, "")
-            st.rerun()
+    if st.button("Reset to Default Template"):
+        st.session_state["context"] = default_prompts.get(st.session_state.selected_prompt_name, "")
+        st.rerun()
 
     # Ensure context is always set if changed
     if prompt_changed:
-         st.session_state["context"] = current_context_input # Make sure state reflects latest input
-
+        st.session_state["context"] = current_context_input # Make sure state reflects latest input
 
     # --- Prompt Output Format Selection ---
     st.markdown("**Expected Output Format:**")
@@ -247,17 +246,18 @@ def render_setup_screen():
     # Get the display name from the current state value
     current_format_value = st.session_state.get("prompt_output_format", "json_score_reason")
     # Handle case where format might be invalid somehow
-    current_format_display = next((k for k, v in format_options.items() if v == current_format_value), list(format_options.keys())[0])
+    current_format_display = next((k for k, v in format_options.items() if v == current_format_value), "JSON (Score and Reason)")
 
-    selected_format_display = st.selectbox(
-        "Select Format:",
+    selected_format_display = st.radio(
+        "Select output format:",
         options=list(format_options.keys()),
         index=list(format_options.keys()).index(current_format_display),
-        key="prompt_format_select",
+        key="output_format_radio",
+        horizontal=True,
         help="""
-        - 'JSON': Expects `{"score": N, "reason": "..."}`. Will attempt to parse score/reason.
-        - 'Integer Score Only': Expects only a number. Will attempt to extract the number as the score.
-        - 'Raw Text': Takes the entire model output as the result (no parsing).
+        - **JSON (Score and Reason):** Expects `{"score": N, "reason": "..."}`.
+        - **Integer Score Only:** Expects just a number (e.g., `7`).
+        - **Raw Text:** Takes the entire model output as the result (no parsing).
         """
     )
     # Update state if format selection changes
@@ -279,26 +279,27 @@ def render_setup_screen():
     # Process uploaded file
     if uploaded_file:
         if uploaded_file != st.session_state.get("uploaded_file_obj"):
-             st.session_state["uploaded_file_obj"] = uploaded_file
-             with st.spinner("Loading data..."):
-                 df = load_data(uploaded_file)
-             st.session_state["raw_df"] = df
-             # Reset downstream state on new file upload
-             st.session_state["processed_df"] = None
-             st.session_state["analyzed_df"] = None
-             st.session_state["processing_complete"] = False
-             st.session_state["analysis_computed"] = False
-             st.session_state["response_column"] = None
-             st.session_state["manual_columns"] = []
-             st.session_state["compute_irr"] = False
-             st.session_state["alignment_verified"] = False
-             st.session_state["icc_value"] = None
-             st.session_state["ratings_matrix_for_viz"] = None
-             st.info("New file uploaded. Please re-select columns below.")
-             st.rerun() # Rerun immediately after loading new data and resetting state
+            st.session_state["uploaded_file_obj"] = uploaded_file
+            with st.spinner("Loading data..."):
+                df = load_data(uploaded_file)
+            st.session_state["raw_df"] = df
+            # Reset downstream state on new file upload
+            st.session_state["processed_df"] = None
+            st.session_state["analyzed_df"] = None
+            st.session_state["processing_complete"] = False
+            st.session_state["analysis_computed"] = False
+            st.session_state["response_column"] = None
+            st.session_state["manual_columns"] = []
+            st.session_state["compute_irr"] = False
+            st.session_state["alignment_step_verified"] = False
+            st.session_state["icc_value"] = None
+            st.session_state["ratings_matrix_for_viz"] = None
+
+            st.info("New file uploaded. Please re-select columns below.")
+            st.rerun() # Rerun immediately after loading new data and resetting state
         else:
-             # Keep existing dataframe if file object hasn't changed
-             df = st.session_state.get("raw_df")
+            # Keep existing dataframe if file object hasn't changed
+            df = st.session_state.get("raw_df")
 
         if df is not None:
             st.success(f"Successfully loaded `{uploaded_file.name}` with {len(df)} rows.")
@@ -313,7 +314,7 @@ def render_setup_screen():
             if st.session_state.get("response_column") in df.columns.tolist():
                 default_resp_col = st.session_state.response_column
             elif "response" in df.columns.tolist(): # Auto-select 'response' if exists
-                 default_resp_col = "response"
+                default_resp_col = "response"
 
             response_column = st.selectbox(
                 "1. Column containing text responses to score:",
@@ -330,74 +331,68 @@ def render_setup_screen():
             # --- IRR Configuration ---
             st.markdown("**Inter-Rater Reliability (Optional):**")
             compute_irr = st.toggle(
-                 "Compare LLM scores with manual scores?",
-                 value=st.session_state.get("compute_irr", False),
-                 key="compute_irr_toggle",
-                 help="Enable this to calculate ICC between LLM and manual scores from your file."
+                "Compare LLM scores with manual scores?",
+                value=st.session_state.get("compute_irr", False),
+                key="compute_irr_toggle",
+                help="Enable to calculate ICC between LLM scores and your manual scores."
             )
-            # Update state only on change
             if compute_irr != st.session_state.get("compute_irr"):
                 st.session_state["compute_irr"] = compute_irr
                 st.rerun()
 
 
             if st.session_state.compute_irr:
-                st.info("Ensure the manual score columns exist in the uploaded file.")
-                # Manual Score Columns (using multiselect for single/multiple)
-                # Filter out the selected response column from options
-                manual_col_options = [col for col in df.columns.tolist() if col != st.session_state.response_column]
+                manual_col_options = [col for col in df.columns if col != st.session_state.response_column]
+                if not manual_col_options:
+                    st.warning("No other columns available for manual scores if the response column is selected.")
+                    st.session_state.manual_columns = []
+                else:
+                    # Ensure existing selections are still valid
+                    current_selection = st.session_state.get("manual_columns", [])
+                    valid_selection = [col for col in current_selection if col in manual_col_options]
 
-                # Try to preserve selection if options are still valid
-                current_selection = st.session_state.get("manual_columns", [])
-                valid_selection = [col for col in current_selection if col in manual_col_options]
-
-                manual_columns = st.multiselect(
-                    "2. Column(s) containing manual scores:",
-                    options=manual_col_options,
-                    default=valid_selection,
-                    key="manual_columns_select",
-                    help="Select one or more columns from your file that contain the human scores."
-                )
-                 # Update state only on change
-                if manual_columns != st.session_state.get("manual_columns"):
-                    st.session_state["manual_columns"] = manual_columns
-                    st.rerun()
+                    manual_columns = st.multiselect(
+                        "2. Column(s) containing manual scores:",
+                        options=manual_col_options,
+                        default=valid_selection,
+                        key="manual_columns_select",
+                        help="Select one or more columns from your file that contain the human scores."
+                    )
+                    # Update state only on change
+                    if manual_columns != st.session_state.get("manual_columns"):
+                        st.session_state["manual_columns"] = manual_columns
+                        st.rerun()
 
                 if not st.session_state.manual_columns:
-                     st.warning("Please select at least one manual score column to compute IRR.")
+                    st.warning("Please select at least one manual score column to compute IRR.")
 
-            # --- Validation and Proceed Button ---
-            st.divider()
-            can_proceed = True
-            error_messages = []
+    # --- Validation and Proceed Button ---
+    st.divider()
+    can_proceed = True
+    error_messages = []
 
-            # Check API key verification for the *selected* provider
-            if not st.session_state.get("api_key_verified", {}).get(selected_provider, False):
-                 error_messages.append(f"{selected_provider.capitalize()} API Key is not provided or verified.")
-                 can_proceed = False
+    # Check API key verification for the *selected* provider
+    if not st.session_state.get("api_key_verified", {}).get(selected_provider, False):
+        error_messages.append(f"{selected_provider.capitalize()} API Key is not provided or verified.")
+        can_proceed = False
+    if not st.session_state.chosen_model:
+        error_messages.append("Model is not selected or entered.")
+        can_proceed = False
+    if not st.session_state.get("context", "").strip():
+        error_messages.append("Prompt context is empty.")
+        can_proceed = False
+    if not st.session_state.response_column:
+        error_messages.append("Response column is not selected.")
+        can_proceed = False
+    if st.session_state.compute_irr and not st.session_state.manual_columns:
+        error_messages.append("Manual score column(s) must be selected when IRR is enabled.")
+        can_proceed = False
 
-            if not st.session_state.chosen_model:
-                 error_messages.append("Model is not selected or entered.")
-                 can_proceed = False
-            if not st.session_state.get("context", "").strip():
-                 error_messages.append("Prompt context is empty.")
-                 can_proceed = False
-            if not st.session_state.response_column:
-                 error_messages.append("Response column is not selected.")
-                 can_proceed = False
-            if st.session_state.compute_irr and not st.session_state.manual_columns:
-                 error_messages.append("Manual score column(s) must be selected when IRR is enabled.")
-                 can_proceed = False
-
-            if not can_proceed:
-                 st.error("Please resolve the following issues before proceeding:\n- " + "\n- ".join(error_messages))
-                 # Disable button explicitly
-                 st.button("➡️ Proceed to Processing", type="primary", use_container_width=True, disabled=True)
-            else:
-                 st.success("Setup complete. Ready to process.")
-                 if st.button("➡️ Proceed to Processing", type="primary", use_container_width=True):
-                     st.session_state["current_step"] = "process"
-                     st.rerun()
-
+    if not can_proceed:
+        for msg in error_messages:
+            st.warning(msg)
+        st.button("Proceed to Processing Step ➡️", disabled=True, use_container_width=True)
     else:
-        st.info("Upload a file to begin configuration.")
+        if st.button("Proceed to Processing Step ➡️", type="primary", use_container_width=True):
+            st.session_state["current_step"] = "process"
+            st.rerun()

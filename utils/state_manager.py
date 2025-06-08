@@ -37,11 +37,17 @@ def init_session_state():
         st.session_state["openai_api_key"] = None
         st.session_state["gemini_api_key"] = None
         st.session_state["anthropic_api_key"] = None
-        st.session_state["openrouter_api_key"] = None # Added OpenRouter key state
+        st.session_state["openrouter_api_key"] = None
+        st.session_state["deepseek_api_key"] = None # Added DeepSeek key state
 
         # Track verification per provider
-        # Added OpenRouter verification state
-        st.session_state["api_key_verified"] = {"openai": False, "gemini": False, "claude": False, "openrouter": False}
+        st.session_state["api_key_verified"] = {
+            "openai": False,
+            "gemini": False,
+            "claude": False,
+            "openrouter": False,
+            "deepseek": False # Added DeepSeek verification state
+        }
 
         # Model Selection
         st.session_state["selected_provider"] = "openai" # Default provider
@@ -55,10 +61,13 @@ def init_session_state():
         st.session_state["context"] = default_context
         st.session_state["custom_context"] = ""
         st.session_state["prompt_choice"] = "Use default prompt"
-        st.session_state["selected_prompt_name"] = next(iter(load_prompts().keys()), "Default Fallback")
+        # Initialize selected_prompt_name safely
+        loaded_prompts = load_prompts()
+        st.session_state["selected_prompt_name"] = next(iter(loaded_prompts.keys()), "Default Fallback") if loaded_prompts else "Default Fallback"
+
         st.session_state["prompt_output_format"] = "json_score_reason" # Default format
-        # st.session_state["use_default_context"] = True # Less relevant now, format is explicit
         st.session_state["_last_selected_prompt"] = st.session_state["selected_prompt_name"]
+
 
         # Column Selections
         st.session_state["response_column"] = None
@@ -66,21 +75,29 @@ def init_session_state():
 
         # IRR related
         st.session_state["compute_irr"] = False
-        st.session_state["alignment_verified"] = False
+        st.session_state["alignment_step_verified"] = False # For analysis screen data check
 
 
-def reset_session():
-    """Resets the session state for a new analysis run."""
-    current_session_id = st.session_state.get("session_id", str(uuid.uuid4()))
+def reset_session(preserve_keys=None):
+    """
+    Resets the session state, optionally preserving some API keys and their verification.
+    All other states are reset to their initial defaults.
+    """
+    if preserve_keys is None:
+        preserve_keys = []
 
-    # List of keys to preserve (e.g., API keys, potentially provider/model choice)
-    # Preserve API keys and verification status
-    # Added openrouter key and verification to preservation list
-    keys_to_preserve = ['session_id', 'openai_api_key', 'gemini_api_key', 'anthropic_api_key', 'openrouter_api_key', 'api_key_verified']
-    preserved_values = {key: st.session_state.get(key) for key in keys_to_preserve}
+    # Store values to preserve
+    preserved_values = {}
+    for key in preserve_keys:
+        if f"{key}_api_key" in st.session_state:
+            preserved_values[f"{key}_api_key"] = st.session_state[f"{key}_api_key"]
+        if "api_key_verified" in st.session_state and key in st.session_state.api_key_verified:
+            if "api_key_verified" not in preserved_values:
+                preserved_values["api_key_verified"] = {}
+            preserved_values["api_key_verified"][key] = st.session_state.api_key_verified[key]
 
-    # Clear all keys
-    keys_to_clear = [k for k in st.session_state.keys()]
+    # Clear all session state keys
+    keys_to_clear = list(st.session_state.keys())
     for key in keys_to_clear:
         try:
             del st.session_state[key]
@@ -94,10 +111,6 @@ def reset_session():
 
     # Re-initialize defaults for non-preserved keys
     st.session_state["initialized"] = False # Force re-initialization
-    init_session_state()
-
-    # Ensure session ID is consistent if it existed
-    st.session_state["session_id"] = current_session_id
-
-    st.success("Session reset. API keys preserved. Ready for new analysis.")
-    st.rerun()
+    init_session_state() # Ensure session ID is consistent if it was cleared
+    st.session_state["current_step"] = "setup" # Reset to setup step
+    st.success("Session reset. Please reconfigure your setup.")
